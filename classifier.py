@@ -2,12 +2,6 @@
 
 #### Steps
 
-# 1) Load parcelated connectivity matrix
-# 2) Take the lower half of the connectivity matrix
-# 3) Vectorize the pconn
-# 4) Input the vectorized pconn into an encoder consisting of a fully connected neural network with n layers
-# 5) Create a decoder
-# 6) Recreate the original pconn and visualize
 
 import os
 import numpy as np
@@ -26,9 +20,6 @@ from keras.models import Sequential
 NUM_PARCELS = 352
 
 
-
-
-
 def reconstruct_pconn(pconn_vec):
     iu = np.triu_indices(NUM_PARCELS, 1)
     recon_pconn = np.zeros((NUM_PARCELS, NUM_PARCELS))
@@ -45,6 +36,25 @@ def load_and_encode(model_path, train_pconns, test_pconns):
 
     return (coded_train_pconns, coded_test_pconns)
 
+def plot_training(training):
+    # Plot training & validation accuracy values
+    plt.plot(training.history['acc'])
+    plt.plot(training.history['val_acc'])
+    plt.title('Classifier Accuracy')
+    plt.ylabel('Accuracy')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Test'], loc='upper left')
+    plt.show()
+
+    # Plot training & validation loss values
+    plt.plot(training.history['loss'])
+    plt.plot(training.history['val_loss'])
+    plt.title('Classifier Binary Crossentropy')
+    plt.ylabel('Loss')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Test'], loc='upper left')
+    plt.show()
+
 def train_classifier(coded_train_pconns, train_labels, coded_test_pconns, test_labels):
     
     classifier = Sequential()
@@ -52,10 +62,14 @@ def train_classifier(coded_train_pconns, train_labels, coded_test_pconns, test_l
     classifier.add(Dense(12, activation='relu'))
     classifier.add(Dense(8, activation='relu'))
     classifier.add(Dense(1, activation='sigmoid'))
+    
+    classifier.summary()
 
     classifier.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
-    classifier.fit(coded_train_pconns, train_labels, epochs=20, batch_size=10)
+    training = classifier.fit(coded_train_pconns, train_labels, validation_split=0.2, epochs=20, batch_size=10)
+
+    plot_training(training)
 
     _, accuracy = classifier.evaluate(coded_test_pconns, test_labels)
 
@@ -90,6 +104,7 @@ def load_class_data():
     iu = np.triu_indices(NUM_PARCELS, 1)
     for i, pconn_path in enumerate(pconn_list):
         pconn_mat = np.loadtxt(pconn_path)
+        np.clip(pconn_mat, -1, 1)
         pconn_tri = pconn_mat[iu]
         pconn_data[i] = pconn_tri
 
