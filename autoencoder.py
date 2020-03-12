@@ -28,6 +28,7 @@ from keras.regularizers import l1
 from keras.optimizers import Adam
 from keras import backend as K
 from keras import regularizers, activations, initializers, constraints, Sequential
+from keras.constraints import UnitNorm, Constraint
 
 NUM_PARCELS = 352
 
@@ -99,7 +100,24 @@ class DenseTied(Layer):
             output = self.activation(output)
         return output
 
+class WeightsOrthogonalityConstraint (Constraint):
+    def __init__(self, encoding_dim, weightage = 1.0, axis = 0):
+        self.encoding_dim = encoding_dim
+        self.weightage = weightage
+        self.axis = axis
+        
+    def weights_orthogonality(self, w):
+        if(self.axis==1):
+            w = K.transpose(w)
+        if(self.encoding_dim > 1):
+            m = K.dot(K.transpose(w), w) - K.eye(self.encoding_dim)
+            return self.weightage * K.sqrt(K.sum(K.square(m)))
+        else:
+            m = K.sum(w ** 2) - 1.
+            return m
 
+    def __call__(self, w):
+        return self.weights_orthogonality(w)
 
 
 
@@ -214,9 +232,9 @@ def train_autoencoder(train_data, test_data):
     # Build encoder
 
     input_pconn = Input(shape=(input_size,))
-    d1 = Dense(hidden_size, activation='relu')
-    d2 = Dense(hidden2_size, activation='relu')
-    d3 = Dense(latent_size, activation='relu')
+    d1 = Dense(hidden_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(hidden_size, weightage=1., axis=0))
+    d2 = Dense(hidden2_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(hidden2_size, weightage=1., axis=0))
+    d3 = Dense(latent_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(latent_size, weightage=1., axis=0))
     hidden_1 = d1(input_pconn)
     hidden2_1 = d2(hidden_1)
     latent = d3(hidden2_1)
