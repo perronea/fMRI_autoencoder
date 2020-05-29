@@ -9,6 +9,14 @@ import matplotlib.pyplot as plt
 import random
 
 from keras.models import load_model
+from autoencoder import WeightsOrthogonalityConstraint, DenseTied, build_autoencoder
+from keras.models import Model
+from keras.layers import Dense, Input, Layer, InputSpec
+from keras.regularizers import l1
+from keras.optimizers import Adam
+from keras import backend as K
+from keras import regularizers, activations, initializers, constraints, Sequential
+from keras.constraints import UnitNorm, Constraint
 
 #from keras.models import Model
 #from keras.layers import Dense, Input
@@ -49,12 +57,56 @@ def load_and_encode_class_data(class_path, encoder):
 
     return encoded_pconns
     
+def build_autoencoder():
+    input_size = 61776
+    hidden_size = 432
+    hidden2_size = 48
+    latent_size = 12
 
+    # Build encoder
+
+    input_pconn = Input(shape=(input_size,))
+    d1 = Dense(hidden_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(hidden_size, weightage=1., axis=0))
+    d2 = Dense(hidden2_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(hidden2_size, weightage=1., axis=0))
+    d3 = Dense(latent_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(latent_size, weightage=1., axis=0))
+    hidden_1 = d1(input_pconn)
+    hidden2_1 = d2(hidden_1)
+    latent = d3(hidden2_1)
+
+    encoder = Model(input_pconn, latent, name='encoder')
+    encoder.summary()
+
+    # Build decoder
+
+    latent_inputs = Input(shape=(latent_size,), name='decoder_input')
+    #hidden2_2 = Dense(hidden2_size, activation='relu')(latent_inputs)
+    #hidden_2 = Dense(hidden_size, activation='relu')(hidden2_2)
+    #output_pconn = Dense(input_size, activation='sigmoid')(hidden_2)
+    td3 = DenseTied(hidden2_size, activation='relu', tied_to=d3)
+    td2 = DenseTied(hidden_size, activation='relu', tied_to=d2)
+    td1 = DenseTied(input_size, activation='sigmoid', tied_to=d1)
+    hidden2_2 = td3(latent_inputs)
+    hidden_2 = td2(hidden2_2)
+    output_pconn = td1(hidden_2)
+
+    decoder = Model(latent_inputs, output_pconn, name="decoder")
+    decoder.summary()
+
+    # Build autoencoder = encoder + decoder
+    #autoencoder = Model(input_pconn, output_pconn)
+    autoencoder = Model(input_pconn, decoder(encoder(input_pconn)), name='autoencoder')
+    autoencoder.summary()
+    autoencoder.compile(optimizer='adam', loss='mean_squared_error')
+
+    return (autoencoder, encoder, decoder)
 
 def main():
 
     model_path = '/home/exacloud/lustre1/fnl_lab/projects/VAE/code/gordon_pconn_encoder.h5'
-    encoder = load_model(model_path, compile=False)
+    model_weights_path = '/home/exacloud/lustre1/fnl_lab/projects/VAE/code/gordon_pconn_encoder_weights.h5'
+#    encoder = load_model(model_path, custom_objects={'WeightsOrthogonalityConstraint': WeightsOrthogonalityConstraint, 'DenseTied': DenseTied}, compile=False)
+    (autoencoder, encoder, decoder) = build_autoencoder()
+    encoder.load_weights(model_weights_path)
 
     encoded_asd = load_and_encode_class_data('/home/exacloud/lustre1/fnl_lab/projects/VAE/data/asd', encoder)
     encoded_adhd = load_and_encode_class_data('/home/exacloud/lustre1/fnl_lab/projects/VAE/data/adhd', encoder)
