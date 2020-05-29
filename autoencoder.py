@@ -100,7 +100,7 @@ class DenseTied(Layer):
             output = self.activation(output)
         return output
 
-class WeightsOrthogonalityConstraint (Constraint):
+class WeightsOrthogonalityConstraint(Constraint):
     def __init__(self, encoding_dim, weightage = 1.0, axis = 0):
         self.encoding_dim = encoding_dim
         self.weightage = weightage
@@ -221,9 +221,7 @@ def plot_training(training):
 def load_autoencoder(h5_path):
     autoencoder = load_model(return_path, compile=False) 
 
-
-def train_autoencoder(train_data, test_data):
-
+def build_autoencoder():
     input_size = 61776
     hidden_size = 432
     hidden2_size = 48
@@ -257,12 +255,20 @@ def train_autoencoder(train_data, test_data):
 
     decoder = Model(latent_inputs, output_pconn, name="decoder")
     decoder.summary()
-
+    
     # Build autoencoder = encoder + decoder
     #autoencoder = Model(input_pconn, output_pconn)
     autoencoder = Model(input_pconn, decoder(encoder(input_pconn)), name='autoencoder')
     autoencoder.summary()
     autoencoder.compile(optimizer='adam', loss='mean_squared_error')
+    
+    return (autoencoder, encoder, decoder)
+
+
+def train_autoencoder(train_data, test_data):
+
+    (autoencoder, encoder, decoder) = build_autoencoder()        
+
     
     #encoder = Model(inputs=autoencoder.input, outputs=autoencoder.get_layer('encoder').output)
 
@@ -281,8 +287,9 @@ def main():
     (train_data, test_data) = load_pconn_data(data_dir)
 
     autoencoder, encoder = train_autoencoder(train_data, test_data)
-    #autoencoder.save('gordon_pconn_autoencoder.h5')
-    #encoder.save('gordon_pconn_encoder.h5')
+    autoencoder.save('gordon_pconn_autoencoder.h5')
+    encoder.save('gordon_pconn_encoder.h5')
+    encoder.save_weights('gordon_pconn_encoder_weights.h5')
     
     #autoencoder = load_model('/home/exacloud/lustre1/fnl_lab/projects/VAE/code/gordon_pconn_autoencoder.h5', compile=False) 
      
