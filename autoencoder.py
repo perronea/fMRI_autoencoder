@@ -20,6 +20,8 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
+import tensorflow as tf
+
 from keras.models import load_model
 
 from keras.models import Model
@@ -31,6 +33,7 @@ from keras import regularizers, activations, initializers, constraints, Sequenti
 from keras.constraints import UnitNorm, Constraint
 
 NUM_PARCELS = 352
+SPLIT = 0.3
 
 class DenseTied(Layer):
     def __init__(self, units,
@@ -119,7 +122,35 @@ class WeightsOrthogonalityConstraint(Constraint):
     def __call__(self, w):
         return self.weights_orthogonality(w)
 
+class UncorrelatedFeaturesConstraint (Constraint):
+    
+    def __init__(self, encoding_dim, weightage = 1.0):
+        self.encoding_dim = encoding_dim
+        self.weightage = weightage
+    
+    def get_covariance(self, x):
+        x_centered_list = []
 
+        for i in range(self.encoding_dim):
+            x_centered_list.append(x[:, i] - K.mean(x[:, i]))
+        
+        x_centered = tf.stack(x_centered_list)
+        covariance = K.dot(x_centered, K.transpose(x_centered)) / tf.cast(x_centered.get_shape()[0], tf.float32)
+        
+        return covariance
+            
+    # Constraint penalty
+    def uncorrelated_feature(self, x):
+        if(self.encoding_dim <= 1):
+            return 0.0
+        else:
+            output = K.sum(K.square(
+                self.covariance - tf.multiply(self.covariance, K.eye(self.encoding_dim))))
+            return output
+
+    def __call__(self, x):
+        self.covariance = self.get_covariance(x)
+        return self.weightage * self.uncorrelated_feature(x)
 
 def plot_autoencoder_outputs(autoencoder, test_data):
     decoded_pconns = autoencoder.predict(test_data)
@@ -199,9 +230,8 @@ def load_pconn_data(data_dir):
         pconn_tri = pconn_mat[iu]
         pconn_data[i] = pconn_tri
 
-    split = 0.1
-    test_data = pconn_data[0:int(len(pconn_list) * split)-1]
-    train_data = pconn_data[int(len(pconn_list) * split):-1]
+    test_data = pconn_data[0:int(len(pconn_list) * SPLIT)-1]
+    train_data = pconn_data[int(len(pconn_list) * SPLIT):-1]
 
     print(train_data.shape)
     print(test_data.shape)
@@ -230,9 +260,9 @@ def build_autoencoder():
     # Build encoder
 
     input_pconn = Input(shape=(input_size,))
-    d1 = Dense(hidden_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(hidden_size, weightage=1., axis=0))
-    d2 = Dense(hidden2_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(hidden2_size, weightage=1., axis=0))
-    d3 = Dense(latent_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(latent_size, weightage=1., axis=0))
+    d1 = Dense(hidden_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(hidden_size, weightage=1., axis=0), activity_regularizer=UncorrelatedFeaturesConstraint(hidden_size, weightage = 1.), kernel_constraint=UnitNorm(axis=0))
+    d2 = Dense(hidden2_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(hidden2_size, weightage=1., axis=0), activity_regularizer=UncorrelatedFeaturesConstraint(hidden2_size, weightage = 1.), kernel_constraint=UnitNorm(axis=0))
+    d3 = Dense(latent_size, activation='relu', kernel_regularizer=WeightsOrthogonalityConstraint(latent_size, weightage=1., axis=0), activity_regularizer=UncorrelatedFeaturesConstraint(latent_size, weightage = 1.), kernel_constraint=UnitNorm(axis=0))
     hidden_1 = d1(input_pconn)
     hidden2_1 = d2(hidden_1)
     latent = d3(hidden2_1)
@@ -246,9 +276,9 @@ def build_autoencoder():
     #hidden2_2 = Dense(hidden2_size, activation='relu')(latent_inputs)
     #hidden_2 = Dense(hidden_size, activation='relu')(hidden2_2)
     #output_pconn = Dense(input_size, activation='sigmoid')(hidden_2)
-    td3 = DenseTied(hidden2_size, activation='relu', tied_to=d3)
-    td2 = DenseTied(hidden_size, activation='relu', tied_to=d2)
-    td1 = DenseTied(input_size, activation='sigmoid', tied_to=d1)
+    td3 = DenseTied(hidden2_size, activation='relu', kernel_constraint=UnitNorm(axis=1), tied_to=d3)
+    td2 = DenseTied(hidden_size, activation='relu', kernel_constraint=UnitNorm(axis=1), tied_to=d2)
+    td1 = DenseTied(input_size, activation='sigmoid', kernel_constraint=UnitNorm(axis=1), tied_to=d1)
     hidden2_2 = td3(latent_inputs)
     hidden_2 = td2(hidden2_2)
     output_pconn = td1(hidden_2)
@@ -260,7 +290,8 @@ def build_autoencoder():
     #autoencoder = Model(input_pconn, output_pconn)
     autoencoder = Model(input_pconn, decoder(encoder(input_pconn)), name='autoencoder')
     autoencoder.summary()
-    autoencoder.compile(optimizer='adam', loss='mean_squared_error')
+    opt = Adam(lr=0.001)
+    autoencoder.compile(optimizer=opt, loss='mean_squared_error')
     
     return (autoencoder, encoder, decoder)
 
@@ -272,24 +303,26 @@ def train_autoencoder(train_data, test_data):
     
     #encoder = Model(inputs=autoencoder.input, outputs=autoencoder.get_layer('encoder').output)
 
-    training = autoencoder.fit(train_data, train_data, validation_split=0.1, epochs=20, batch_size=1, verbose=1)
+    training = autoencoder.fit(train_data, train_data, validation_split=SPLIT, epochs=20, batch_size=1, verbose=1)
 
     plot_training(training)
 
 
-    return (autoencoder, encoder)
+    return (autoencoder, encoder, decoder)
 
 
 def main():
 
-    data_dir = '/home/exacloud/lustre1/fnl_lab/projects/VAE/data/pconn_data'
+    data_dir = '/home/exacloud/lustre1/fnl_lab/projects/VAE/data/test_pconn_data'
 
     (train_data, test_data) = load_pconn_data(data_dir)
 
-    autoencoder, encoder = train_autoencoder(train_data, test_data)
+    autoencoder, encoder, decoder = train_autoencoder(train_data, test_data)
     autoencoder.save('gordon_pconn_autoencoder.h5')
     encoder.save('gordon_pconn_encoder.h5')
     encoder.save_weights('gordon_pconn_encoder_weights.h5')
+    decoder.save('gordon_pconn_decoder.h5')
+    decoder.save_weights('gordon_pconn_decoder_weights.h5')
     
     #autoencoder = load_model('/home/exacloud/lustre1/fnl_lab/projects/VAE/code/gordon_pconn_autoencoder.h5', compile=False) 
      
